@@ -2,6 +2,7 @@ import time
 from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException
+from app.router import classify
 
 from app.cache.exact import cache_get, cache_set, is_cacheable
 from app.guardrails.base import GuardrailBlocked
@@ -13,7 +14,7 @@ from app.schemas import ChatRequest, ProviderResponse, Target
 app = FastAPI(title="LLM Gateway")
 
 
-def build_response(res: ProviderResponse, start: float, cache: str, attempts: list, guardrails: list):
+def build_response(res: ProviderResponse, start: float, cache: str, attempts: list, guardrails: list,route=None):
     return {
         "object": "chat.completion",
         "model": res.model,
@@ -31,6 +32,7 @@ def build_response(res: ProviderResponse, start: float, cache: str, attempts: li
             "latency_ms": round((time.perf_counter() - start) * 1000),
             "guardrails": guardrails,
             "attempts": attempts,
+             "route": route,
         },
     }
 
@@ -58,6 +60,10 @@ async def guardrails_check(req: ChatRequest):
         "events": [asdict(e) for e in events],
     }
 
+@app.post("/v1/route/check")
+async def route_check(req: ChatRequest):
+    """Debug: show which chain a request would be routed to, no model call."""
+    return asdict(classify(req))
 
 @app.post("/v1/chat/completions")
 async def chat(req: ChatRequest):
@@ -86,7 +92,14 @@ async def chat(req: ChatRequest):
             return build_response(cached, start, "hit", [], g_events)
 
     # 3. fallback chain
-    chain = CHAINS.get(req.model) or [Target(provider=DEFAULT_PROVIDER, model=req.model)]
+    route = None
+    if req.model == "auto":
+        decision = classify(req)
+        route = asdict(decision)
+        chain = CHAINS[decision.chain]
+    else:
+        chain = CHAINS.get(req.model) or [Target(provider=DEFAULT_PROVIDER, model=req.model)]
+
     try:
         res, attempts = await run_chain(chain, req)
     except AllProvidersFailed as e:
@@ -99,4 +112,4 @@ async def chat(req: ChatRequest):
     if cacheable:
         await cache_set(req, res)
 
-    return build_response(res, start, "miss" if cacheable else "skip", attempts, g_events)
+    return build_response(res, start, "miss" if cacheable else "skip", attempts, g_events, route)
