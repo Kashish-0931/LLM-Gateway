@@ -1,0 +1,28 @@
+providers:
+  huggingface:
+    base_url: https://router.huggingface.co/v1
+    api_key_env: HF_TOKEN
+
+# alias -> ordered fallback chain
+chains:
+  fast:
+    - { provider: huggingface, model: meta-llama/Llama-3.1-8B-Instruct }
+    - { provider: huggingface, model: google/gemma-3-4b-it }
+
+  smart:
+    - { provider: huggingface, model: meta-llama/Llama-3.3-70B-Instruct }
+    - { provider: huggingface, model: Qwen/Qwen2.5-72B-Instruct }
+    - { provider: huggingface, model: openai/gpt-oss-120b }
+
+  # temporary: first target is fake, to watch failover happen
+  failover-demo:
+    - { provider: huggingface, model: does-not-exist/fake-model }
+    - { provider: huggingface, model: meta-llama/Llama-3.1-8B-Instruct }
+
+
+
+guardrails:
+  input:
+    max_chars: 8000
+    pii: redact        # redact | block | off
+    injection: block   # block | flag | off
